@@ -88,16 +88,13 @@ async fn main() -> Result<()> {
         anyhow::bail!("No monitors detected on server machine");
     };
 
-    // Build initial grid with server's monitors
-    let mut grid = config.grid.clone();
-    for mon in &monitors {
-        if !grid.monitors.iter().any(|m| m.name == mon.name && m.machine_id == mon.machine_id) {
-            let col = grid.monitors.len() as u32;
-            let mut m = mon.clone();
-            m.grid_col = Some(col);
-            m.grid_row = Some(0);
-            grid.monitors.push(m);
-        }
+    // Build grid with ONLY the server's actual monitors (ignore stale config)
+    let mut grid = Grid::new();
+    for (i, mon) in monitors.iter().enumerate() {
+        let mut m = mon.clone();
+        m.grid_col = Some(i as u32);
+        m.grid_row = Some(0);
+        grid.monitors.push(m);
     }
     grid.rebuild_transitions();
 
