@@ -1,6 +1,6 @@
 use anyhow::Result;
 use monomouse_core::{Grid, GridEdge, Machine};
-use monomouse_input::{create_injector, detect_monitors};
+use monomouse_input::{create_injector, detect_monitors, InputInjector};
 use monomouse_net::protocol::Message;
 use monomouse_net::transport::Connection;
 use std::sync::Arc;
@@ -45,9 +45,14 @@ async fn main() -> Result<()> {
     let mut machine = Machine::new(hostname(), false);
     machine.monitors = monitors;
 
+    // Create input injector ONCE, before the reconnect loop.
+    // This way if it fails (permissions), we bail immediately instead of
+    // reconnecting in a loop and adding duplicate monitors each time.
+    let injector = Arc::new(tokio::sync::Mutex::new(create_injector()?));
+
     loop {
         info!("Connecting to server at {server_addr}...");
-        match run_client(&server_addr, &machine).await {
+        match run_client(&server_addr, &machine, Arc::clone(&injector)).await {
             Ok(()) => {
                 info!("Disconnected cleanly");
                 break;
@@ -63,23 +68,23 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
+async fn run_client(
+    server_addr: &str,
+    machine: &Machine,
+    injector: Arc<tokio::sync::Mutex<Box<dyn InputInjector>>>,
+) -> Result<()> {
     let mut conn = Connection::connect(server_addr).await?;
 
-    // Send Hello
     conn.send(&Message::Hello(machine.clone())).await?;
 
-    // Wait for Welcome
     let msg = conn.recv().await?;
-    let _server_id = match msg {
+    match msg {
         Message::Welcome { server_id } => {
             info!("Connected to server {server_id}");
-            server_id
         }
         other => anyhow::bail!("Expected Welcome, got: {other:?}"),
     };
 
-    // Receive grid config
     let msg = conn.recv().await?;
     let grid = match msg {
         Message::GridConfig(grid) => {
@@ -102,14 +107,10 @@ async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
         cursor_y: 0,
     }));
 
-    // Split connection
     let (mut reader, writer) = conn.split();
     let writer = Arc::new(tokio::sync::Mutex::new(writer));
 
-    // Create input injector
-    let injector = Arc::new(tokio::sync::Mutex::new(create_injector()?));
-
-    // Spawn keepalive task
+    // Keepalive
     let writer_keepalive = Arc::clone(&writer);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(10));
@@ -132,7 +133,6 @@ async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
                     continue;
                 }
 
-                // Track cursor position for edge detection
                 match &event {
                     monomouse_core::InputEvent::MouseMove { dx, dy } => {
                         s.cursor_x += dx;
@@ -145,16 +145,13 @@ async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
                     _ => {}
                 }
 
-                // Check if cursor hit an edge
                 if let Some(monitor_id) = s.active_monitor_id {
-                    // Copy monitor dimensions to avoid borrow conflict
                     let mon_info = s.grid.monitors.iter()
                         .find(|m| m.id == monitor_id)
                         .map(|m| (m.width, m.height));
 
                     if let Some((w, h)) = mon_info {
-                        let edge_result = check_cursor_edge_raw(w, h, s.cursor_x, s.cursor_y);
-                        if let Some((edge, ratio)) = edge_result {
+                        if let Some((edge, ratio)) = check_cursor_edge_raw(w, h, s.cursor_x, s.cursor_y) {
                             s.cursor_x = s.cursor_x.clamp(0, w as i32 - 1);
                             s.cursor_y = s.cursor_y.clamp(0, h as i32 - 1);
 
@@ -174,18 +171,13 @@ async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
                     }
                 }
 
-                // Inject the input event
                 let mut inj = injector.lock().await;
                 if let Err(e) = inj.inject(&event) {
                     warn!("Failed to inject input: {e}");
                 }
             }
 
-            Message::Activate {
-                monitor_id,
-                x,
-                y,
-            } => {
+            Message::Activate { monitor_id, x, y } => {
                 let mut s = state.write().await;
                 s.active = true;
                 s.active_monitor_id = Some(monitor_id);
@@ -216,7 +208,6 @@ async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
             }
 
             Message::Clipboard(content) => {
-                // TODO: Set local clipboard
                 info!("Clipboard received ({} bytes)", content.len());
             }
 
@@ -227,7 +218,6 @@ async fn run_client(server_addr: &str, machine: &Machine) -> Result<()> {
     }
 }
 
-/// Check if the cursor is at a monitor edge using raw dimensions.
 fn check_cursor_edge_raw(width: u32, height: u32, cx: i32, cy: i32) -> Option<(GridEdge, f64)> {
     let w = width as i32;
     let h = height as i32;

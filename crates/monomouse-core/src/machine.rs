@@ -16,8 +16,10 @@ pub struct Machine {
 
 impl Machine {
     pub fn new(name: String, is_server: bool) -> Self {
+        // Deterministic ID from hostname so reconnects are recognized
+        let id = Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes());
         Self {
-            id: Uuid::new_v4(),
+            id,
             name,
             addr: None,
             port: 24800,
