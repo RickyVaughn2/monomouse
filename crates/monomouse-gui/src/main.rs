@@ -45,7 +45,6 @@ impl GridBuilderApp {
     fn new(config: Config, local_monitors: Vec<Monitor>) -> Self {
         let grid = config.grid.clone();
 
-        // Collect monitors that are in the grid
         let placed_ids: Vec<Uuid> = grid
             .monitors
             .iter()
@@ -53,7 +52,6 @@ impl GridBuilderApp {
             .map(|m| m.id)
             .collect();
 
-        // Find unplaced monitors (local monitors not in the grid)
         let mut unplaced = Vec::new();
         for mon in &local_monitors {
             if !placed_ids.contains(&mon.id)
@@ -63,7 +61,6 @@ impl GridBuilderApp {
             }
         }
 
-        // Determine grid size
         let max_col = grid
             .monitors
             .iter()
@@ -85,6 +82,39 @@ impl GridBuilderApp {
             grid_rows: (max_row + 2).max(2),
             selected_cell: None,
             status_message: String::new(),
+        }
+    }
+
+    /// Get the target cell for placing a monitor:
+    /// use the selected cell if it's empty, otherwise find the first empty cell.
+    fn target_cell(&self) -> Option<(u32, u32)> {
+        if let Some((col, row)) = self.selected_cell {
+            if self.grid.monitor_at(col, row).is_none() {
+                return Some((col, row));
+            }
+        }
+        // Fallback to first empty cell
+        for row in 0..self.grid_rows {
+            for col in 0..self.grid_cols {
+                if self.grid.monitor_at(col, row).is_none() {
+                    return Some((col, row));
+                }
+            }
+        }
+        None
+    }
+
+    fn place_monitor(&mut self, mon: &Monitor) {
+        if let Some((col, row)) = self.target_cell() {
+            let mut m = mon.clone();
+            m.grid_col = Some(col);
+            m.grid_row = Some(row);
+
+            self.unplaced_monitors.retain(|u| u.id != mon.id);
+            self.grid.monitors.retain(|u| u.id != mon.id);
+            self.grid.monitors.push(m);
+            self.grid.rebuild_transitions();
+            self.status_message = format!("Placed {} at ({}, {})", mon.name, col, row);
         }
     }
 }
@@ -132,7 +162,14 @@ impl eframe::App for GridBuilderApp {
                 ui.heading("Unplaced Monitors");
                 ui.separator();
 
-                // Also show monitors in grid that have no grid position
+                // Hint about selected cell
+                if let Some((col, row)) = self.selected_cell {
+                    if self.grid.monitor_at(col, row).is_none() {
+                        ui.label(format!("Target: cell ({}, {})", col, row));
+                        ui.separator();
+                    }
+                }
+
                 let unplaced_in_grid: Vec<Monitor> = self
                     .grid
                     .monitors
@@ -151,6 +188,9 @@ impl eframe::App for GridBuilderApp {
                 if all_unplaced.is_empty() {
                     ui.label("All monitors placed!");
                 } else {
+                    // Collect which monitor to place (can't mutate self inside the loop)
+                    let mut to_place: Option<Monitor> = None;
+
                     for mon in &all_unplaced {
                         let text = format!(
                             "{}\n{}x{} (machine: {})",
@@ -166,19 +206,12 @@ impl eframe::App for GridBuilderApp {
                         );
 
                         if response.clicked() {
-                            // Place in first empty cell
-                            if let Some((col, row)) = self.find_empty_cell() {
-                                let mut m = mon.clone();
-                                m.grid_col = Some(col);
-                                m.grid_row = Some(row);
-
-                                // Remove from unplaced
-                                self.unplaced_monitors.retain(|u| u.id != mon.id);
-                                self.grid.monitors.retain(|u| u.id != mon.id);
-                                self.grid.monitors.push(m);
-                                self.grid.rebuild_transitions();
-                            }
+                            to_place = Some(mon.clone());
                         }
+                    }
+
+                    if let Some(mon) = to_place {
+                        self.place_monitor(&mon);
                     }
                 }
             });
@@ -200,8 +233,6 @@ impl eframe::App for GridBuilderApp {
                         ui.label(format!("Machine: {}", &mon.machine_id.to_string()[..8]));
 
                         ui.separator();
-
-                        // Show transitions
                         ui.label("Transitions:");
                         for t in &self.grid.transitions {
                             if t.from_monitor == mon.id {
@@ -238,14 +269,14 @@ impl eframe::App for GridBuilderApp {
                         ui.label("Click a monitor in the left panel to place it here.");
                     }
                 } else {
-                    ui.label("Click a grid cell to see details.");
+                    ui.label("Select a grid cell, then click a monitor to place it there.");
                 }
             });
 
         // Central panel: the grid
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Monitor Grid");
-            ui.label("Click to select. Click unplaced monitors to place them in the first empty cell.");
+            ui.label("1. Click an empty cell to select it  2. Click a monitor on the left to place it there");
             ui.separator();
 
             let available = ui.available_size();
@@ -263,11 +294,12 @@ impl eframe::App for GridBuilderApp {
                             egui::Sense::click(),
                         );
 
-                        // Draw cell
                         let painter = ui.painter();
 
-                        let bg_color = if is_selected {
-                            egui::Color32::from_rgb(70, 130, 180)
+                        let bg_color = if is_selected && mon.is_none() {
+                            egui::Color32::from_rgb(50, 150, 50) // Green for selected empty cell
+                        } else if is_selected {
+                            egui::Color32::from_rgb(70, 130, 180) // Blue for selected occupied cell
                         } else if mon.is_some() {
                             egui::Color32::from_rgb(60, 60, 80)
                         } else {
@@ -290,12 +322,21 @@ impl eframe::App for GridBuilderApp {
                                 egui::Color32::WHITE,
                             );
                         } else {
+                            let label = if is_selected {
+                                "[ TARGET ]".to_string()
+                            } else {
+                                format!("({}, {})", col, row)
+                            };
                             painter.text(
                                 rect.center(),
                                 egui::Align2::CENTER_CENTER,
-                                format!("({}, {})", col, row),
+                                label,
                                 egui::FontId::proportional(10.0),
-                                egui::Color32::from_rgb(80, 80, 80),
+                                if is_selected {
+                                    egui::Color32::WHITE
+                                } else {
+                                    egui::Color32::from_rgb(80, 80, 80)
+                                },
                             );
                         }
 
@@ -306,7 +347,6 @@ impl eframe::App for GridBuilderApp {
                 });
             }
 
-            // Bottom info
             ui.separator();
             ui.label(format!(
                 "Total monitors: {} | Transitions: {} | Grid: {}x{}",
@@ -316,18 +356,5 @@ impl eframe::App for GridBuilderApp {
                 self.grid_rows,
             ));
         });
-    }
-}
-
-impl GridBuilderApp {
-    fn find_empty_cell(&self) -> Option<(u32, u32)> {
-        for row in 0..self.grid_rows {
-            for col in 0..self.grid_cols {
-                if self.grid.monitor_at(col, row).is_none() {
-                    return Some((col, row));
-                }
-            }
-        }
-        None
     }
 }
