@@ -443,6 +443,21 @@ async fn handle_new_client(
         return;
     }
 
+    // Remove any existing monitors from this machine (handles reconnects)
+    // Match by machine_id OR by machine name (since machine_id changes per run)
+    let old_machine_ids: Vec<Uuid> = s
+        .clients
+        .iter()
+        .filter(|(_, c)| c.machine.name == machine.name)
+        .map(|(id, _)| *id)
+        .collect();
+    for old_id in &old_machine_ids {
+        s.clients.remove(old_id);
+        s.grid.monitors.retain(|m| m.machine_id != *old_id);
+    }
+    s.grid.monitors.retain(|m| m.machine_id != machine_id);
+
+    // Place new monitors in next available columns
     let max_col = s
         .grid
         .monitors
@@ -451,8 +466,10 @@ async fn handle_new_client(
         .max()
         .unwrap_or(0);
 
+    let start_col = if s.grid.monitors.is_empty() { 0 } else { max_col + 1 };
+
     for (i, mon) in machine.monitors.iter().enumerate() {
-        let col = max_col + 1 + i as u32;
+        let col = start_col + i as u32;
         let mut m = mon.clone();
         m.grid_col = Some(col);
         m.grid_row = Some(0);
