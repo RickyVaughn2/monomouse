@@ -1,0 +1,13 @@
+[package]
+name = "monomouse-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types and grid topology for MonoMouse"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }

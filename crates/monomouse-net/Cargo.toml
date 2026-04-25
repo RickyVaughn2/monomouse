@@ -1,0 +1,20 @@
+[package]
+name = "monomouse-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Networking protocol and transport for MonoMouse"
+
+[dependencies]
+monomouse-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"

@@ -1,0 +1,11 @@
+[package]
+name = "monomouse-clipboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-platform clipboard sharing for MonoMouse"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+arboard = "3"

@@ -1,0 +1,12 @@
+[package]
+name = "monomouse-discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "mDNS auto-discovery for MonoMouse machines on LAN"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+mdns-sd = "0.11"

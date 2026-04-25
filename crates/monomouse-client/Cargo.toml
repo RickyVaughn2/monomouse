@@ -1,0 +1,22 @@
+[package]
+name = "monomouse-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MonoMouse client - runs on secondary machines"
+
+[[bin]]
+name = "monomouse-client"
+path = "src/main.rs"
+
+[dependencies]
+monomouse-core = { workspace = true }
+monomouse-net = { workspace = true }
+monomouse-input = { workspace = true }
+monomouse-clipboard = { workspace = true }
+monomouse-discovery = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
