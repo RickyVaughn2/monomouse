@@ -2,10 +2,11 @@ use anyhow::Result;
 use monomouse_core::Monitor;
 use uuid::Uuid;
 
-use windows::Win32::Foundation::{BOOL, LPARAM, RECT, TRUE};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{LPARAM, RECT, TRUE};
 use windows::Win32::Graphics::Gdi::{
-    EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
-    MONITORINFOEXW, DISPLAY_DEVICEW, DISPLAY_DEVICE_ACTIVE,
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
+    MONITORINFOEXW,
 };
 
 /// Detect monitors on Windows using EnumDisplayMonitors.
@@ -21,11 +22,11 @@ pub fn detect_monitors() -> Result<Vec<Monitor>> {
         let context = [monitors_ptr, machine_id_ptr];
 
         EnumDisplayMonitors(
-            HDC::default(),
+            None,
             None,
             Some(enum_monitor_callback),
             LPARAM(&context as *const _ as isize),
-        )?;
+        ).ok()?;
     }
 
     Ok(monitors)
@@ -87,10 +88,7 @@ fn get_monitor_scale(hmonitor: HMONITOR) -> f64 {
 }
 
 fn get_machine_id() -> Uuid {
-    // On Windows, we use the machine GUID from the registry
-    // For now, use a stable UUID derived from the computer name
     if let Ok(name) = std::env::var("COMPUTERNAME") {
-        // Create a deterministic UUID from the computer name
         Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes())
     } else {
         Uuid::new_v4()

@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use monomouse_core::{InputEvent, KeyCode, KeyState, MouseButton};
 use crate::InputCapture;
-use tracing::{info, debug};
+use tracing::info;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+    CallNextHookEx, GetCursorPos, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
     HHOOK, KBDLLHOOKSTRUCT, MSG, MSLLHOOKSTRUCT,
     WH_KEYBOARD_LL, WH_MOUSE_LL,
     WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
@@ -16,10 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL,
     WM_XBUTTONDOWN, WM_XBUTTONUP, WM_MOUSEHWHEEL,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::GetCursorPos;
-use windows::Win32::Foundation::POINT;
 
-// Thread-local storage for the hook callback to send events
 use std::cell::RefCell;
 
 thread_local! {
@@ -109,21 +106,17 @@ fn run_hook_loop(
     running: Arc<AtomicBool>,
 ) {
     unsafe {
-        // Set up thread-local state
         EVENT_SENDER.with(|s| *s.borrow_mut() = Some(sender));
 
-        // Install low-level mouse hook
         let mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), None, 0)
             .expect("Failed to set mouse hook");
 
-        // Install low-level keyboard hook
         let kb_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), None, 0)
             .expect("Failed to set keyboard hook");
 
         MOUSE_HOOK.with(|h| *h.borrow_mut() = Some(mouse_hook));
         KB_HOOK.with(|h| *h.borrow_mut() = Some(kb_hook));
 
-        // Message loop (required for low-level hooks)
         let mut msg = MSG::default();
         while running.load(Ordering::SeqCst) {
             GRABBED.with(|g| *g.borrow_mut() = grabbed.load(Ordering::SeqCst));
@@ -148,7 +141,6 @@ unsafe extern "system" fn mouse_hook_proc(
 
         let event = match msg {
             WM_MOUSEMOVE => {
-                // We send absolute position; the server will compute delta
                 Some(InputEvent::MouseAbsolute {
                     x: data.pt.x,
                     y: data.pt.y,
@@ -179,21 +171,21 @@ unsafe extern "system" fn mouse_hook_proc(
                 pressed: false,
             }),
             WM_MOUSEWHEEL => {
-                let delta = (data.mouseData.0 >> 16) as i16 as i32;
+                let delta = (data.mouseData >> 16) as i16 as i32;
                 Some(InputEvent::MouseScroll {
                     dx: 0,
                     dy: delta / 120,
                 })
             }
             WM_MOUSEHWHEEL => {
-                let delta = (data.mouseData.0 >> 16) as i16 as i32;
+                let delta = (data.mouseData >> 16) as i16 as i32;
                 Some(InputEvent::MouseScroll {
                     dx: delta / 120,
                     dy: 0,
                 })
             }
             WM_XBUTTONDOWN => {
-                let button_num = (data.mouseData.0 >> 16) & 0xFFFF;
+                let button_num = (data.mouseData >> 16) & 0xFFFF;
                 let button = if button_num == 1 {
                     MouseButton::Extra1
                 } else {
@@ -205,7 +197,7 @@ unsafe extern "system" fn mouse_hook_proc(
                 })
             }
             WM_XBUTTONUP => {
-                let button_num = (data.mouseData.0 >> 16) & 0xFFFF;
+                let button_num = (data.mouseData >> 16) & 0xFFFF;
                 let button = if button_num == 1 {
                     MouseButton::Extra1
                 } else {
@@ -226,7 +218,6 @@ unsafe extern "system" fn mouse_hook_proc(
                 }
             });
 
-            // If grabbed, consume the event (don't pass to system)
             let is_grabbed = GRABBED.with(|g| *g.borrow());
             if is_grabbed {
                 return LRESULT(1);
